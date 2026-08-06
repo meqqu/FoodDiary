@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class ActivityLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    ATHLETE = "ATHLETE"
+
+
+class Gender(str, Enum):
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+
+
+class HealthGoal(str, Enum):
+    LOSE = "LOSE"
+    MAINTAIN = "MAINTAIN"
+    GAIN = "GAIN"
+
+
+class MealType(str, Enum):
+    BREAKFAST = "BREAKFAST"
+    LUNCH = "LUNCH"
+    DINNER = "DINNER"
+    SNACK = "SNACK"
+
+
+class ProfileOut(BaseModel):
+    age: int
+    weight_kg: float
+    height_cm: float
+    activity_level: ActivityLevel
+    vegetarian: bool
+    goal: HealthGoal
+    gender: Gender
+    health_issues: str
+    target_weight_kg: float | None = None
+    goal_deadline: str = ""
+    dietary_preferences: str = ""
+    allergies: str = ""
+    lab_results: str = ""
+    bmi: float
+    targets: dict[str, float]
+    vitamins: list[str]
+
+
+class ProfileUpdate(BaseModel):
+    age: int = Field(ge=10, le=120)
+    weight_kg: float = Field(gt=20, le=400)
+    height_cm: float = Field(gt=100, le=250)
+    activity_level: ActivityLevel
+    vegetarian: bool = False
+    goal: HealthGoal
+    gender: Gender
+    health_issues: str = ""
+    target_weight_kg: float | None = Field(default=None, gt=20, le=400)
+    goal_deadline: str = ""
+    dietary_preferences: str = ""
+    allergies: str = ""
+    lab_results: str = ""
+
+
+class FoodEntryOut(BaseModel):
+    id: int
+    date: str
+    time: str
+    meal_type: str
+    food_name: str
+    calories: float
+    protein: float
+    fat: float
+    carbs: float
+    fiber: float
+    sugar: float
+    source: str
+    health_score: int
+
+
+class FoodCreate(BaseModel):
+    date: str | None = None
+    time: str | None = None
+    meal_type: MealType = MealType.SNACK
+    food_name: str
+    calories: float = 0
+    protein: float = 0
+    fat: float = 0
+    carbs: float = 0
+    fiber: float = 0
+    sugar: float = 0
+    source: str = "manual"
+
+
+class DaySummary(BaseModel):
+    date: str
+    entries: list[FoodEntryOut]
+    totals: dict[str, float]
+    targets: dict[str, float]
+    daily_score: int
+    water_ml: int
+    water_goal_ml: int = 2000
+
+
+class WaterUpdate(BaseModel):
+    date: str | None = None
+    ml: int = Field(ge=0, le=10000)
+
+
+class ShoppingItemOut(BaseModel):
+    id: int
+    name: str
+    category: str
+    quantity: str
+    checked: bool
+    source: str
+
+
+class ShoppingCreate(BaseModel):
+    name: str
+    category: str = "OTHER"
+    quantity: str = ""
+    source: str = "manual"
+
+
+class ShoppingPatch(BaseModel):
+    checked: bool | None = None
+    name: str | None = None
+    quantity: str | None = None
+    category: str | None = None
+
+
+class PurchaseOut(BaseModel):
+    id: int
+    date: str
+    name: str
+    category: str
+    amount: float
+    note: str
+
+
+class PurchaseCreate(BaseModel):
+    date: str | None = None
+    name: str
+    category: str = "OTHER"
+    amount: float = 0
+    note: str = ""
+    mark_shopping_bought: bool = False
+
+
+class PurchaseAnalytics(BaseModel):
+    period_days: int
+    total_amount: float
+    by_category: dict[str, float]
+    top_items: list[dict]
+    purchases: list[PurchaseOut]
+
+
+class AiChatRequest(BaseModel):
+    message: str
+
+
+class FoodPhotoResponse(BaseModel):
+    reply: str
+    actions: list[dict] = []
+    description: str
+
+
+class AiChatResponse(BaseModel):
+    reply: str
+    actions: list[dict] = []
+
+
+class UserMe(BaseModel):
+    user_id: int
+    telegram_id: int
+    first_name: str | None
+    username: str | None
