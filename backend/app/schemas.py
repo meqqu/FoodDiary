@@ -87,6 +87,7 @@ class FoodEntryOut(BaseModel):
     sugar: float
     source: str
     health_score: int
+    health_reason: str = ""
 
 
 class FoodCreate(BaseModel):

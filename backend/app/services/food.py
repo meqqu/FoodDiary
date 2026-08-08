@@ -9,6 +9,7 @@ from app.services.nutrition import (
     entry_health_score,
     profile_from_row,
 )
+from app.services import beverages
 
 
 def _today() -> str:
@@ -34,6 +35,7 @@ def _entry_from_row(row) -> FoodEntryOut:
         sugar=row["sugar"],
         source=row["source"],
         health_score=row["health_score"],
+        health_reason=row["health_reason"] if "health_reason" in row.keys() else "",
     )
 
 
@@ -91,12 +93,16 @@ async def update_profile(user_id: int, data: ProfileUpdate):
 async def log_food(user_id: int, data: FoodCreate) -> FoodEntryOut:
     profile = await get_profile(user_id)
     score = entry_health_score(data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, HealthGoal(profile.goal))
+    health_reason = ""
+    beverage = await beverages.assess(data.food_name, data.calories, data.protein, data.fat, data.carbs, data.sugar)
+    if beverage:
+        score, health_reason = beverage.score, beverage.reason
     entry_date = data.date or _today()
     entry_time = data.time or _now_time()
     db = await get_db()
     try:
-        cur = await db.execute("""INSERT INTO food_log (user_id, date, time, meal_type, food_name, calories, protein, fat, carbs, fiber, sugar, source, health_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (user_id, entry_date, entry_time, data.meal_type.value, data.food_name, data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, data.source, score))
+        cur = await db.execute("""INSERT INTO food_log (user_id, date, time, meal_type, food_name, calories, protein, fat, carbs, fiber, sugar, source, health_score, health_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (user_id, entry_date, entry_time, data.meal_type.value, data.food_name, data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, data.source, score, health_reason))
         await db.commit()
         cur = await db.execute("SELECT * FROM food_log WHERE id = ?", (cur.lastrowid,))
         entry = _entry_from_row(await cur.fetchone())

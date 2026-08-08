@@ -29,6 +29,7 @@ export type FoodEntry = {
   sugar: number;
   source: string;
   health_score: number;
+  health_reason: string;
 };
 
 export type Profile = {

@@ -49,10 +49,19 @@ CREATE TABLE IF NOT EXISTS food_log (
     sugar REAL NOT NULL DEFAULT 0,
     source TEXT NOT NULL DEFAULT 'manual',
     health_score INTEGER NOT NULL DEFAULT 5,
+    health_reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_food_user_date ON food_log(user_id, date);
+
+CREATE TABLE IF NOT EXISTS beverage_evaluations (
+    normalized_name TEXT PRIMARY KEY,
+    health_score INTEGER NOT NULL,
+    health_reason TEXT NOT NULL,
+    assessment_source TEXT NOT NULL DEFAULT 'TEMPLATE',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS water_log (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -303,6 +312,9 @@ async def init_db() -> None:
         for name, definition in migrations.items():
             if name not in columns:
                 await db.execute(f"ALTER TABLE profiles ADD COLUMN {name} {definition}")
+        food_columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(food_log)")).fetchall()}
+        if "health_reason" not in food_columns:
+            await db.execute("ALTER TABLE food_log ADD COLUMN health_reason TEXT NOT NULL DEFAULT ''")
         profile_columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(profiles)")).fetchall()}
         if "profile_completed" not in profile_columns:
             await db.execute("ALTER TABLE profiles ADD COLUMN profile_completed INTEGER NOT NULL DEFAULT 1")
