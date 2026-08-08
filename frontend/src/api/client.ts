@@ -37,6 +37,8 @@ export type Profile = {
   height_cm: number;
   activity_level: string;
   vegetarian: boolean;
+  vegan: boolean;
+  raw_food: boolean;
   goal: string;
   gender: string;
   health_issues: string;

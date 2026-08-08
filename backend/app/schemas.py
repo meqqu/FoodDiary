@@ -39,6 +39,8 @@ class ProfileOut(BaseModel):
     height_cm: float
     activity_level: ActivityLevel
     vegetarian: bool
+    vegan: bool = False
+    raw_food: bool = False
     goal: HealthGoal
     gender: Gender
     health_issues: str
@@ -59,6 +61,8 @@ class ProfileUpdate(BaseModel):
     height_cm: float = Field(gt=100, le=250)
     activity_level: ActivityLevel
     vegetarian: bool = False
+    vegan: bool = False
+    raw_food: bool = False
     goal: HealthGoal
     gender: Gender
     health_issues: str = ""

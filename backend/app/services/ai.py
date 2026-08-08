@@ -84,7 +84,7 @@ SYSTEM_PROMPT = """Ты персональный нутрициолог и по�
 Правила:
 - Если пользователь говорит что съел — вызови log_food с реалистичной оценкой КБЖУ.
 - Если просит список/рекомендации покупок — предложи продукты под его цель и добавь в список через add_shopping_item (по согласию или явно если просит «добавь»).
-- Учитывай профиль здоровья, вегетарианство и недавний дневник.
+- Учитывай профиль здоровья, стиль питания (вегетарианство, веганство, сыроедение) и недавний дневник. Не предлагай продукты, которые противоречат выбранному стилю.
 - Не выдумывай медицинские диагнозы; давай практичные советы по еде и покупкам.
 """
 
@@ -191,7 +191,7 @@ async def chat(user_id: int, message: str) -> tuple[str, list[dict]]:
     context = (
         f"Профиль: пол={profile.gender}, возраст={profile.age}, вес={profile.weight_kg} кг, "
         f"рост={profile.height_cm} см, активность={profile.activity_level}, цель={profile.goal}, "
-        f"вегетарианец={profile.vegetarian}, проблемы={profile.health_issues or 'нет'}, "
+        f"вегетарианец={profile.vegetarian}, веган={profile.vegan}, сыроедение={profile.raw_food}, проблемы={profile.health_issues or 'нет'}, "
         f"BMI={profile.bmi}, цели КБЖУ={profile.targets}.\n"
         f"Целевой вес={profile.target_weight_kg or 'не указан'}, срок={profile.goal_deadline or 'не указан'}, предпочтения={profile.dietary_preferences or 'нет'}, аллергии={profile.allergies or 'нет'}, анализы={profile.lab_results or 'не добавлены'}.\n"
         f"Витамины-подсказки: {', '.join(profile.vitamins)}.\n"
@@ -326,7 +326,7 @@ async def clinician_nutrition_draft(patient_id: int, diagnosis: str, treatment_g
         "Не ставь диагнозов, не меняй дозировки и не назначай лекарства. "
         "Верни 5–7 практичных пунктов: режим, белок/клетчатка, продукты, ограничения.\n"
         f"Пациент: возраст {profile.age}, пол {profile.gender}, вес {profile.weight_kg}, рост {profile.height_cm}, цель профиля {profile.goal}, "
-        f"предпочтения {profile.dietary_preferences or 'нет'}, аллергии {profile.allergies or 'нет'}.\n"
+        f"предпочтения {profile.dietary_preferences or 'нет'}, веган={profile.vegan}, сыроедение={profile.raw_food}, аллергии {profile.allergies or 'нет'}.\n"
         f"Контекст врача: {diagnosis or 'не указан'}. Цель ведения: {treatment_goal or 'не указана'}. Ограничения: {avoidances or 'не указаны'}."
     )
     data = await _call_deepseek([

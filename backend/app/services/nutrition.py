@@ -196,6 +196,8 @@ def profile_from_row(row) -> ProfileOut:
         "height_cm": row["height_cm"],
         "activity_level": row["activity_level"],
         "vegetarian": bool(row["vegetarian"]),
+        "vegan": bool(row["vegan"]) if "vegan" in row.keys() else False,
+        "raw_food": bool(row["raw_food"]) if "raw_food" in row.keys() else False,
         "goal": row["goal"],
         "gender": row["gender"],
         "health_issues": row["health_issues"] or "",
