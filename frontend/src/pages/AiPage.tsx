@@ -1,2 +1,40 @@
-﻿import {useEffect,useRef,useState} from "react";import {api} from "../api/client";type Msg={role:"me"|"bot";text:string};type History={id:number;kind:string;request_text:string;response_text:string;created_at:string};
-export default function AiPage(){const [input,setInput]=useState(""),[busy,setBusy]=useState(false),[msgs,setMsgs]=useState<Msg[]>([{role:"bot",text:"Расскажите, что вы съели — я добавлю это в дневник. Можно также сфотографировать блюдо."}]),[history,setHistory]=useState<History[]>([]);const photo=useRef<HTMLInputElement>(null);const loadHistory=()=>api.aiHistory().then(setHistory).catch(()=>undefined);useEffect(()=>{void loadHistory()},[]);const send=async()=>{const text=input.trim();if(!text||busy)return;setInput("");setMsgs(m=>[...m,{role:"me",text}]);setBusy(true);try{const r=await api.aiChat(text);setMsgs(m=>[...m,{role:"bot",text:r.reply||"Готово."}]);void loadHistory()}catch(e){setMsgs(m=>[...m,{role:"bot",text:e instanceof Error?e.message:"Не удалось получить ответ."}])}finally{setBusy(false)}};const scan=async(file?:File)=>{if(!file)return;setMsgs(m=>[...m,{role:"me",text:"📷 Отправлено фото блюда"}]);setBusy(true);try{const r=await api.recognizeFoodPhoto(file);setMsgs(m=>[...m,{role:"bot",text:`Распознано: ${r.description}\n\n${r.reply}`}]);void loadHistory()}catch(e){setMsgs(m=>[...m,{role:"bot",text:e instanceof Error?e.message:"Не удалось распознать фото."}])}finally{setBusy(false)}};return <><section className="card chat">{msgs.map((m,i)=><div key={i} className={`bubble ${m.role==="me"?"me":""}`}>{m.text}</div>)}</section><section className="card form-card"><label>Сообщение<textarea rows={3} value={input} onChange={e=>setInput(e.target.value)} placeholder="Например: съел курицу с рисом и салатом" onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();void send()}}}/></label><input ref={photo} hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={e=>void scan(e.target.files?.[0])}/><div className="row"><button className="btn" disabled={busy} onClick={()=>photo.current?.click()}>📷 Сфотографировать еду</button><button className="btn primary" disabled={busy||!input.trim()} onClick={()=>void send()}>{busy?"Обрабатываю…":"Отправить"}</button></div></section><section className="card"><div className="section-head"><strong>История рекомендаций</strong><span>{history.length}</span></div>{history.length===0?<p className="muted">Здесь будут сохранены ответы и рекомендации помощника.</p>:history.map(item=><article className="entry" key={item.id}><time>{new Date(item.created_at+"Z").toLocaleDateString("ru-RU",{day:"2-digit",month:"short"})}</time><div><strong>{item.kind==="shopping"?"Рекомендации покупок":"Совет помощника"}</strong><span>{item.response_text}</span></div></article>)}</section></>}
+import { useEffect, useState } from "react";
+import { api } from "../api/client";
+
+type Msg = { role: "me" | "bot"; text: string };
+type History = { id: number; kind: string; response_text: string; created_at: string };
+
+const title = (kind: string) => kind === "shopping" ? "Рекомендация для покупок" : kind === "receipt" ? "Чек" : "Совет помощника";
+
+export default function AiPage() {
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msgs, setMsgs] = useState<Msg[]>([{ role: "bot", text: "Опишите еду, спросите совет или попросите помочь со списком покупок." }]);
+  const [history, setHistory] = useState<History[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const loadHistory = () => api.aiHistory().then(setHistory).catch(() => undefined);
+  useEffect(() => { void loadHistory(); }, []);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput(""); setMsgs(m => [...m, { role: "me", text }]); setBusy(true);
+    try {
+      const result = await api.aiChat(text);
+      setMsgs(m => [...m, { role: "bot", text: result.reply || "Готово." }]);
+      await loadHistory();
+    } catch (e) { setMsgs(m => [...m, { role: "bot", text: e instanceof Error ? e.message : "Не удалось получить ответ." }]); }
+    finally { setBusy(false); }
+  };
+  const latest = history[0];
+
+  return <>
+    <section className="card chat">{msgs.map((m, i) => <div key={i} className={`bubble ${m.role === "me" ? "me" : ""}`}>{m.text}</div>)}</section>
+    <section className="card form-card"><label>Сообщение<textarea rows={3} value={input} onChange={e => setInput(e.target.value)} placeholder="Например: что съесть на ужин, если сегодня мало белка?" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}/></label><button className="btn primary" disabled={busy || !input.trim()} onClick={() => void send()}>{busy ? "Обрабатываю…" : "Отправить"}</button></section>
+    <section className="card recommendation-card">
+      <div className="section-head"><div><strong>Последняя рекомендация</strong><span>{latest ? new Date(latest.created_at + "Z").toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "Пока нет рекомендаций"}</span></div><button className="text-btn" onClick={() => setShowHistory(v => !v)}>{showHistory ? "Скрыть историю" : `История · ${history.length}`}</button></div>
+      {latest ? <div className="latest-recommendation"><b>{title(latest.kind)}</b><p>{latest.response_text}</p></div> : <p className="muted">Сохранённые советы помощника появятся здесь.</p>}
+      {showHistory && <div className="recommendation-history">{history.length === 0 ? <p className="muted">История пока пуста.</p> : history.map((item, index) => <article className="recommendation-entry" key={item.id}><div className="recommendation-entry-head"><strong>{index === 0 ? "Последняя · " : ""}{title(item.kind)}</strong><time>{new Date(item.created_at + "Z").toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></div><p>{item.response_text}</p></article>)}</div>}
+    </section>
+  </>;
+}

@@ -14,6 +14,8 @@ GOAL_MULT = {
     HealthGoal.LOSE: 0.85,
     HealthGoal.MAINTAIN: 1.0,
     HealthGoal.GAIN: 1.15,
+    HealthGoal.TESTOSTERONE: 1.0,
+    HealthGoal.TREATMENT: 1.0,
 }
 
 
@@ -43,7 +45,7 @@ def calc_targets(profile: ProfileUpdate | dict) -> dict[str, float]:
     gender_offset = -161 if gender == Gender.FEMALE else 5
     bmr = 10 * weight + 6.25 * height - 5 * age + gender_offset
     target_calories = bmr * ACTIVITY_MULT[activity] * 1.2 * GOAL_MULT[goal]
-    target_protein = weight * (2.0 if goal == HealthGoal.GAIN else 1.6)
+    target_protein = weight * (2.0 if goal == HealthGoal.GAIN else 1.8 if goal == HealthGoal.TESTOSTERONE else 1.6)
     target_fat = weight * 1.0
     target_carbs = (target_calories - target_protein * 4 - target_fat * 9) / 4
     if target_carbs < 50:
@@ -80,6 +82,10 @@ def suggested_vitamins(goal: HealthGoal, health_issues: str) -> list[str]:
         vitamins.append("Экстракт зел. чая")
     elif goal == HealthGoal.GAIN:
         vitamins.append("Креатин")
+        if "Омега-3" not in vitamins:
+            vitamins.append("Омега-3")
+    elif goal == HealthGoal.TESTOSTERONE:
+        vitamins.extend(["Витамин D", "Цинк", "Магний"])
         if "Омега-3" not in vitamins:
             vitamins.append("Омега-3")
 
@@ -198,6 +204,7 @@ def profile_from_row(row) -> ProfileOut:
         "dietary_preferences": (row["dietary_preferences"] if "dietary_preferences" in row.keys() else "") or "",
         "allergies": (row["allergies"] if "allergies" in row.keys() else "") or "",
         "lab_results": (row["lab_results"] if "lab_results" in row.keys() else "") or "",
+        "profile_completed": bool(row["profile_completed"]) if "profile_completed" in row.keys() else True,
     }
     targets = calc_targets(data)
     goal = HealthGoal(data["goal"])

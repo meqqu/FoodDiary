@@ -1,72 +1,163 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction
-from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message, PreCheckoutQuery, WebAppInfo
 from app.auth import TelegramUser, ensure_user
 from app.config import settings
 from app.services import ai as ai_svc
+from app.services import access as access_svc
+from app.services import subscriptions as sub_svc
+from app.services import care as care_svc
 
 logger = logging.getLogger(__name__)
 bot: Bot | None = None
 dp = Dispatcher()
 
-def allowed_usernames() -> set[str]:
-    return {u.strip().lstrip("@").lower() for u in settings.allowed_usernames.split(",") if u.strip()}
-
-def is_allowed(message: Message) -> bool:
+async def is_allowed(message: Message) -> bool:
     user = message.from_user
-    if not user: return False
-    allowed = allowed_usernames()
-    return not allowed or (user.username or "").lower() in allowed
+    return bool(user and await access_svc.is_allowed_username(user.username))
 
-def webapp_keyboard() -> InlineKeyboardMarkup | None:
+def miniapp_url() -> str:
     url = (settings.webapp_url or "").strip()
-    if not url.startswith("https://"): return None
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Открыть дневник", web_app=WebAppInfo(url=url))
-    ]])
+    return url if url.startswith("https://") else ""
 
-async def deny(message: Message) -> None:
-    await message.answer("Этот бот личный — доступ есть только у авторизованных пользователей.")
+
+def webapp_keyboard() -> InlineKeyboardMarkup:
+    url = miniapp_url()
+    if url:
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть дневник", web_app=WebAppInfo(url=url))]])
+    fallback = (settings.fallback_site_url or "http://38.180.244.125").strip()
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть сайт (тест)", url=fallback)]])
+
+async def user_id(message: Message) -> int:
+    user = message.from_user
+    return await ensure_user(TelegramUser(id=user.id, username=user.username, first_name=user.first_name))
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    if not is_allowed(message):
-        await deny(message); return
-    tg = TelegramUser(id=message.from_user.id, username=message.from_user.username, first_name=message.from_user.first_name)
-    await ensure_user(tg)
-    kb = webapp_keyboard()
-    text = (
-        f"Привет, {message.from_user.first_name or 'друг'}!\n\n"
-        "Это ваш личный дневник питания.\n"
-        "• Напишите, что съели — ИИ добавит запись в дневник\n"
-        "• Спросите «что купить» — получите рекомендации\n"
+    if not await is_allowed(message):
+        await message.answer("Доступ к боту ограничен.")
+        return
+    uid = await user_id(message)
+    info = await sub_svc.status(uid)
+    lines = ["Food Diary — напишите, что съели, и я добавлю это в дневник."]
+    if not miniapp_url():
+        lines.append("Mini App будет доступен после подключения HTTPS-адреса.")
+    if info["development_mode"]:
+        lines.append("Режим разработки включён: подписки, оплата и лимиты отключены.")
+    elif info["premium"]:
+        lines.append("Premium активен.")
+    else:
+        lines.append("Premium: /subscribe")
+    if info["is_admin"]:
+        lines.append("Управление проектом: /admin")
+    await message.answer("\n".join(lines), reply_markup=webapp_keyboard())
+
+
+@dp.message(Command("admin"))
+async def admin(message: Message):
+    if not await is_allowed(message):
+        await message.answer("Доступ к боту ограничен.")
+        return
+    uid = await user_id(message)
+    if not await sub_svc.is_admin(uid):
+        await message.answer("Эта команда доступна только главному администратору.")
+        return
+    enabled = await sub_svc.development_mode()
+    state = "включён — оплата и лимиты отключены" if enabled else "выключен — действуют пробный период и лимиты"
+    suffix = "\nОткройте Mini App → Профиль → Управление подписками, чтобы изменить режим." if miniapp_url() else "\nПока доступна тестовая ссылка; для панели внутри Telegram нужен HTTPS-адрес Mini App."
+    await message.answer(f"Администраторский режим: {state}.{suffix}", reply_markup=webapp_keyboard())
+
+@dp.message(Command("subscribe"))
+async def subscribe(message: Message):
+    if not await is_allowed(message):
+        await message.answer("Доступ к боту ограничен.")
+        return
+    uid = await user_id(message)
+    info = await sub_svc.status(uid)
+    if info["development_mode"]:
+        await message.answer("Подписки сейчас отключены для тестирования. Управление режимом: /admin.")
+        return
+    if info["premium"]:
+        await message.answer("Подписка уже активна."); return
+    await message.answer_invoice(
+        title="Food Diary Premium", description="Безлимитные запросы к ИИ и записи еды на 30 дней.",
+        payload=f"subscription:{uid}", provider_token="", currency="XTR",
+        prices=[LabeledPrice(label="Premium, 30 дней", amount=settings.subscription_price_stars)],
+        subscription_period=30 * 24 * 60 * 60,
     )
-    text += "• Кнопка ниже откроет Mini App" if kb else "• Mini App: http://127.0.0.1:5173"
-    await message.answer(text, reply_markup=kb)
+
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    await query.answer(ok=query.currency == "XTR" and query.invoice_payload.startswith("subscription:"))
+
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message):
+    payment = message.successful_payment
+    if payment.currency != "XTR" or not payment.invoice_payload.startswith("subscription:"):
+        return
+    uid = await user_id(message)
+    await sub_svc.activate_payment(uid, payment.telegram_payment_charge_id, payment.total_amount)
+    await message.answer("Подписка активирована на 30 дней. Спасибо!", reply_markup=webapp_keyboard())
 
 @dp.message(F.text)
 async def on_text(message: Message):
     if not message.from_user or not message.text: return
-    if not is_allowed(message):
-        await deny(message); return
-    tg = TelegramUser(id=message.from_user.id, username=message.from_user.username, first_name=message.from_user.first_name)
-    user_id = await ensure_user(tg)
-    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    if not await is_allowed(message):
+        await message.answer("Доступ к боту ограничен."); return
+    uid = await user_id(message)
     try:
-        reply, _actions = await ai_svc.chat(user_id, message.text)
+        await sub_svc.consume(uid, "ai")
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        reply, _actions = await ai_svc.chat(uid, message.text)
+        await ai_svc.record_history(uid, "chat", message.text, reply)
         await message.answer(reply or "Готово.", reply_markup=webapp_keyboard())
-    except Exception as e:
+    except Exception as exc:
         logger.exception("AI chat failed")
-        await message.answer(f"Не удалось обработать запрос: {e}\nПроверьте DEEPSEEK_API_KEY.")
+        await message.answer(str(exc))
+
+async def send_patient_invitation(telegram_id: int, clinician_name: str, link_id: int) -> bool:
+    """Delivers consent buttons to a patient who has already used the bot."""
+    if not bot:
+        logger.warning("Care invitation %s was created, but bot is not running", link_id)
+        return False
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Разрешить доступ", callback_data=f"care-invite:yes:{link_id}"),
+        InlineKeyboardButton(text="Отклонить", callback_data=f"care-invite:no:{link_id}"),
+    ]])
+    try:
+        await bot.send_message(telegram_id, f"{clinician_name} приглашает вас стать пациентом в Food Diary.\n\nПосле подтверждения специалист увидит ваш дневник питания и отметки назначений.", reply_markup=keyboard)
+        return True
+    except Exception:
+        logger.exception("Could not send care invitation to %s", telegram_id)
+        return False
+
+
+@dp.callback_query(F.data.startswith("care-invite:"))
+async def care_invite_answer(callback: CallbackQuery):
+    if not callback.from_user or not callback.data:
+        return
+    try:
+        _, action, raw_link_id = callback.data.split(":", 2)
+        internal_user_id = await ensure_user(TelegramUser(id=callback.from_user.id, username=callback.from_user.username, first_name=callback.from_user.first_name))
+        accepted = action == "yes"
+        if not await care_svc.consent_link(internal_user_id, int(raw_link_id), accepted):
+            await callback.answer("Этот запрос уже обработан или больше недействителен.", show_alert=True)
+            return
+        text = "Доступ врачу подтверждён. Вы можете изменить его в приложении." if accepted else "Запрос отклонён. Доступ к дневнику не предоставлен."
+        await callback.answer("Готово")
+        if callback.message:
+            await callback.message.edit_text(text)
+    except Exception:
+        logger.exception("Care invitation callback failed")
+        await callback.answer("Не удалось обработать запрос. Попробуйте открыть приложение.", show_alert=True)
 
 async def start_bot() -> None:
     global bot
     bot = Bot(token=settings.telegram_bot_token)
-    logger.info("Bot allowlist: %s", sorted(allowed_usernames()) or ["*"])
     await dp.start_polling(bot)
 
 async def stop_bot() -> None:

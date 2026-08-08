@@ -60,7 +60,7 @@ async def update_profile(user_id: int, data: ProfileUpdate):
             UPDATE profiles SET
                 age=?, weight_kg=?, height_cm=?, activity_level=?,
                 vegetarian=?, goal=?, gender=?, health_issues=?, target_weight_kg=?,
-                goal_deadline=?, dietary_preferences=?, allergies=?, lab_results=?
+                goal_deadline=?, dietary_preferences=?, allergies=?, lab_results=?, profile_completed=1
             WHERE user_id=?
             """,
             (
@@ -88,59 +88,51 @@ async def update_profile(user_id: int, data: ProfileUpdate):
 
 async def log_food(user_id: int, data: FoodCreate) -> FoodEntryOut:
     profile = await get_profile(user_id)
-    goal = HealthGoal(profile.goal)
-    score = entry_health_score(
-        data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, goal
-    )
+    score = entry_health_score(data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, HealthGoal(profile.goal))
     entry_date = data.date or _today()
     entry_time = data.time or _now_time()
-
     db = await get_db()
     try:
-        cur = await db.execute(
-            """
-            INSERT INTO food_log (
-                user_id, date, time, meal_type, food_name,
-                calories, protein, fat, carbs, fiber, sugar, source, health_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                entry_date,
-                entry_time,
-                data.meal_type.value,
-                data.food_name,
-                data.calories,
-                data.protein,
-                data.fat,
-                data.carbs,
-                data.fiber,
-                data.sugar,
-                data.source,
-                score,
-            ),
-        )
+        cur = await db.execute("""INSERT INTO food_log (user_id, date, time, meal_type, food_name, calories, protein, fat, carbs, fiber, sugar, source, health_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (user_id, entry_date, entry_time, data.meal_type.value, data.food_name, data.calories, data.protein, data.fat, data.carbs, data.fiber, data.sugar, data.source, score))
         await db.commit()
-        entry_id = cur.lastrowid
-        cur = await db.execute("SELECT * FROM food_log WHERE id = ?", (entry_id,))
-        row = await cur.fetchone()
-        return _entry_from_row(row)
+        cur = await db.execute("SELECT * FROM food_log WHERE id = ?", (cur.lastrowid,))
+        entry = _entry_from_row(await cur.fetchone())
     finally:
         await db.close()
+    from app.services import analytics as analytics_svc
+    await analytics_svc.refresh_day(user_id, entry_date)
+    return entry
 
 
 async def delete_food(user_id: int, entry_id: int) -> bool:
     db = await get_db()
     try:
-        cur = await db.execute(
-            "DELETE FROM food_log WHERE id = ? AND user_id = ?",
-            (entry_id, user_id),
-        )
+        cur = await db.execute("SELECT date FROM food_log WHERE id=? AND user_id=?", (entry_id, user_id))
+        row = await cur.fetchone()
+        if not row:
+            return False
+        entry_date = row["date"]
+        await db.execute("DELETE FROM food_log WHERE id = ? AND user_id = ?", (entry_id, user_id))
         await db.commit()
-        return cur.rowcount > 0
     finally:
         await db.close()
+    from app.services import analytics as analytics_svc
+    await analytics_svc.refresh_day(user_id, entry_date)
+    return True
 
+
+async def set_water(user_id: int, day: str | None, ml: int) -> int:
+    day = day or _today()
+    db = await get_db()
+    try:
+        await db.execute("INSERT INTO water_log (user_id, date, ml) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET ml = excluded.ml", (user_id, day, ml))
+        await db.commit()
+    finally:
+        await db.close()
+    from app.services import analytics as analytics_svc
+    await analytics_svc.refresh_day(user_id, day)
+    return ml
 
 async def get_day(user_id: int, day: str | None = None) -> DaySummary:
     day = day or _today()

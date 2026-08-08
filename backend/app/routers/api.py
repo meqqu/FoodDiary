@@ -11,6 +11,15 @@ from app.schemas import (
     FoodCreate,
     FoodEntryOut,
     FoodPhotoResponse,
+    MoodUpdate,
+    WeightCreate,
+    RegimenCreate,
+    RegimenPatch,
+    RegimenLogUpdate,
+    CarePlanUpdate,
+    CareConsentUpdate,
+    CareLinkCreate,
+    CarePatientInvite,
     ProfileOut,
     ProfileUpdate,
     PurchaseAnalytics,
@@ -23,8 +32,13 @@ from app.schemas import (
     WaterUpdate,
 )
 from app.services import ai as ai_svc
+from app.services import access as access_svc
+from app.services import analytics as analytics_svc
 from app.services import food as food_svc
 from app.services import shopping as shopping_svc
+from app.services import regimen as regimen_svc
+from app.services import care as care_svc
+from app.services import subscriptions as sub_svc
 
 router = APIRouter(prefix="/api")
 
@@ -67,6 +81,7 @@ async def food_day(date: str | None = None, user_id: int = CurrentUser):
 
 @router.post("/food", response_model=FoodEntryOut)
 async def create_food(data: FoodCreate, user_id: int = CurrentUser):
+    await sub_svc.consume(user_id, "food")
     return await food_svc.log_food(user_id, data)
 
 
@@ -83,6 +98,186 @@ async def put_water(data: WaterUpdate, user_id: int = CurrentUser):
     ml = await food_svc.set_water(user_id, data.date, data.ml)
     return {"date": data.date, "ml": ml}
 
+
+@router.get("/analytics/week")
+async def analytics_week(start: str | None = None, user_id: int = CurrentUser):
+    return await analytics_svc.get_week(user_id, start)
+
+
+@router.get("/analytics/day")
+async def analytics_day(date: str | None = None, user_id: int = CurrentUser):
+    return await analytics_svc.get_day(user_id, date)
+
+
+@router.put("/analytics/mood")
+async def analytics_mood(data: MoodUpdate, user_id: int = CurrentUser):
+    return await analytics_svc.set_mood(user_id, data.date, data.mood, data.energy, data.note)
+
+
+@router.get("/analytics/weight")
+async def analytics_weight(user_id: int = CurrentUser):
+    return await analytics_svc.get_weights(user_id)
+
+
+@router.post("/analytics/weight")
+async def analytics_add_weight(data: WeightCreate, user_id: int = CurrentUser):
+    return await analytics_svc.add_weight(user_id, data.date, data.weight_kg)
+
+@router.get("/care/context")
+async def care_context(user_id: int = CurrentUser):
+    return await care_svc.context(user_id)
+
+
+@router.get("/care/plan")
+async def care_plan(user_id: int = CurrentUser):
+    return await care_svc.patient_plan(user_id)
+
+
+@router.put("/care/plan")
+async def care_plan_save(data: CarePlanUpdate, user_id: int = CurrentUser):
+    return await care_svc.save_plan(user_id, user_id, data, "PATIENT")
+
+
+@router.get("/care/links")
+async def care_links(user_id: int = CurrentUser):
+    return await care_svc.patient_links(user_id)
+
+
+@router.put("/care/links/{link_id}/consent")
+async def care_link_consent(link_id: int, data: CareConsentUpdate, user_id: int = CurrentUser):
+    if not await care_svc.consent_link(user_id, link_id, data.accepted):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.delete("/care/links/{link_id}")
+async def care_link_revoke(link_id: int, user_id: int = CurrentUser):
+    if not await care_svc.revoke_link(user_id, link_id):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.get("/care/audit")
+async def care_audit(user_id: int = CurrentUser):
+    return await care_svc.audit(user_id)
+
+
+@router.post("/clinician/patients/invite")
+async def clinician_patient_invite(data: CarePatientInvite, user_id: int = CurrentUser):
+    try:
+        invitation = await care_svc.invite_patient(user_id, data.username)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    from app.bot.runner import send_patient_invitation
+    await send_patient_invitation(invitation["patient_telegram_id"], invitation["clinician_name"], invitation["id"])
+    return {"id": invitation["id"], "status": "PENDING", "message": "Приглашение отправлено пациенту в боте."}
+
+@router.get("/clinician/patients")
+async def clinician_patients(user_id: int = CurrentUser):
+    if not await care_svc.is_clinician(user_id): raise HTTPException(403, "Clinician role required")
+    return await care_svc.clinician_patients(user_id)
+
+
+@router.get("/clinician/patients/{patient_id}/overview")
+async def clinician_patient_overview(patient_id: int, days: int = Query(30, ge=7, le=365), user_id: int = CurrentUser):
+    try: return await care_svc.clinician_overview(user_id, patient_id, days)
+    except PermissionError as exc: raise HTTPException(403, str(exc)) from exc
+
+
+@router.get("/clinician/patients/{patient_id}/plan")
+async def clinician_patient_plan(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id): raise HTTPException(403, "No patient consent")
+    return await care_svc.patient_plan(patient_id)
+
+
+@router.put("/clinician/patients/{patient_id}/plan")
+async def clinician_patient_plan_save(patient_id: int, data: CarePlanUpdate, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id): raise HTTPException(403, "No patient consent")
+    return await care_svc.save_plan(patient_id, user_id, data, "CLINICIAN")
+
+@router.get("/clinician/patients/{patient_id}/regimen")
+async def clinician_patient_regimen(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await regimen_svc.list_items(patient_id)
+
+
+@router.post("/clinician/patients/{patient_id}/regimen")
+async def clinician_patient_regimen_create(patient_id: int, data: RegimenCreate, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await regimen_svc.create_item(patient_id, data, prescribed_by_user_id=user_id)
+
+
+@router.patch("/clinician/patients/{patient_id}/regimen/{item_id}")
+async def clinician_patient_regimen_patch(patient_id: int, item_id: int, data: RegimenPatch, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    try:
+        item = await regimen_svc.patch_item(patient_id, item_id, data, prescribed_by_user_id=user_id)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    if not item:
+        raise HTTPException(404, "Not found")
+    return item
+
+
+@router.delete("/clinician/patients/{patient_id}/regimen/{item_id}")
+async def clinician_patient_regimen_delete(patient_id: int, item_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    try:
+        deleted = await regimen_svc.delete_item(patient_id, item_id, prescribed_by_user_id=user_id)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.post("/clinician/patients/{patient_id}/nutrition-draft")
+async def clinician_nutrition_draft(patient_id: int, data: CarePlanUpdate, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return {"reply": await ai_svc.clinician_nutrition_draft(patient_id, data.diagnosis, data.treatment_goal, data.avoidances)}
+
+@router.get("/regimen")
+async def regimen_items(user_id: int = CurrentUser):
+    return await regimen_svc.list_items(user_id)
+
+
+@router.post("/regimen")
+async def regimen_create(data: RegimenCreate, user_id: int = CurrentUser):
+    return await regimen_svc.create_item(user_id, data)
+
+
+@router.patch("/regimen/{item_id}")
+async def regimen_patch(item_id: int, data: RegimenPatch, user_id: int = CurrentUser):
+    item = await regimen_svc.patch_item(user_id, item_id, data)
+    if not item:
+        raise HTTPException(404, "Not found")
+    return item
+
+
+@router.delete("/regimen/{item_id}")
+async def regimen_delete(item_id: int, user_id: int = CurrentUser):
+    if not await regimen_svc.delete_item(user_id, item_id):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.get("/regimen/today")
+async def regimen_today(date: str | None = None, user_id: int = CurrentUser):
+    return await regimen_svc.today(user_id, date)
+
+
+@router.put("/regimen/{item_id}/taken")
+async def regimen_taken(item_id: int, data: RegimenLogUpdate, user_id: int = CurrentUser):
+    if not await regimen_svc.set_taken(user_id, item_id, data.slot, data.taken, data.date):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
 
 @router.get("/shopping", response_model=list[ShoppingItemOut])
 async def get_shopping(user_id: int = CurrentUser):
@@ -136,6 +331,7 @@ async def delete_purchase(purchase_id: int, user_id: int = CurrentUser):
 
 @router.post("/ai/chat", response_model=AiChatResponse)
 async def ai_chat(data: AiChatRequest, user_id: int = CurrentUser):
+    await sub_svc.consume(user_id, "ai")
     reply, actions = await ai_svc.chat(user_id, data.message)
     await ai_svc.record_history(user_id, "chat", data.message, reply)
     return AiChatResponse(reply=reply, actions=actions)
@@ -170,3 +366,95 @@ async def ai_shopping_refresh(user_id: int = CurrentUser):
 @router.get("/ai/history")
 async def ai_history(user_id: int = CurrentUser):
     return await ai_svc.get_history(user_id)
+
+@router.post("/ai/receipt", response_model=FoodPhotoResponse)
+async def ai_receipt(image: UploadFile = File(...), user_id: int = CurrentUser):
+    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(415, "Поддерживаются JPG, PNG и WEBP")
+    try:
+        reply, description, actions = await ai_svc.analyze_receipt(user_id, await image.read(), image.content_type)
+        await ai_svc.record_history(user_id, "receipt", "Фото чека", reply)
+        return FoodPhotoResponse(reply=reply, description=description, actions=actions)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@router.get("/subscription")
+async def subscription_status(user_id: int = CurrentUser):
+    return await sub_svc.status(user_id)
+
+
+@router.get("/admin/access")
+async def admin_access_list(user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return await access_svc.list_access()
+
+
+@router.post("/admin/access")
+async def admin_access_grant(username: str, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return await access_svc.grant_access(username, user_id)
+
+
+@router.delete("/admin/access/{username}")
+async def admin_access_revoke(username: str, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    await access_svc.revoke_access(username)
+    return {"ok": True}
+
+@router.get("/admin/care-overview")
+async def admin_care_overview(user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id): raise HTTPException(403, "Admin access required")
+    return await care_svc.admin_overview(user_id)
+
+@router.delete("/admin/clinicians/{username}")
+async def admin_remove_clinician(username: str, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id): raise HTTPException(403, "Admin access required")
+    if not await care_svc.remove_clinician_by_username(user_id, username): raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+@router.post("/admin/clinicians")
+async def admin_make_clinician(username: str, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id): raise HTTPException(403, "Admin access required")
+    try: return await care_svc.set_clinician_by_username(username)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/admin/care-links")
+async def admin_request_care_link(data: CareLinkCreate, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id): raise HTTPException(403, "Admin access required")
+    try:
+        invitation = await care_svc.request_link(user_id, data.clinician_username, data.patient_username)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    from app.bot.runner import send_patient_invitation
+    await send_patient_invitation(invitation["patient_telegram_id"], invitation["clinician_name"], invitation["id"])
+    return invitation
+
+@router.get("/admin/development-mode")
+async def admin_development_mode(user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return {"enabled": await sub_svc.development_mode()}
+
+
+@router.put("/admin/development-mode")
+async def admin_set_development_mode(enabled: bool, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return {"enabled": await sub_svc.set_development_mode(enabled)}
+
+@router.get("/admin/subscriptions")
+async def admin_subscriptions(user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return await sub_svc.admin_list()
+
+
+@router.patch("/admin/subscriptions/{target_user_id}")
+async def admin_subscription_update(target_user_id: int, blocked: bool | None = None, extend_days: int | None = None, user_id: int = CurrentUser):
+    if not await sub_svc.is_admin(user_id):
+        raise HTTPException(403, "Admin access required")
+    return await sub_svc.admin_update(target_user_id, blocked, extend_days)

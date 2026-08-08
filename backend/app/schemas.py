@@ -22,6 +22,8 @@ class HealthGoal(str, Enum):
     LOSE = "LOSE"
     MAINTAIN = "MAINTAIN"
     GAIN = "GAIN"
+    TESTOSTERONE = "TESTOSTERONE"
+    TREATMENT = "TREATMENT"
 
 
 class MealType(str, Enum):
@@ -45,6 +47,7 @@ class ProfileOut(BaseModel):
     dietary_preferences: str = ""
     allergies: str = ""
     lab_results: str = ""
+    profile_completed: bool = True
     bmi: float
     targets: dict[str, float]
     vitamins: list[str]
@@ -110,6 +113,17 @@ class WaterUpdate(BaseModel):
     date: str | None = None
     ml: int = Field(ge=0, le=10000)
 
+
+class MoodUpdate(BaseModel):
+    date: str | None = None
+    mood: int | None = Field(default=None, ge=1, le=5)
+    energy: int | None = Field(default=None, ge=1, le=3)
+    note: str = Field(default="", max_length=500)
+
+
+class WeightCreate(BaseModel):
+    date: str | None = None
+    weight_kg: float = Field(gt=20, le=400)
 
 class ShoppingItemOut(BaseModel):
     id: int
@@ -180,3 +194,51 @@ class UserMe(BaseModel):
     telegram_id: int
     first_name: str | None
     username: str | None
+
+class RegimenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    item_type: Literal["SUPPLEMENT", "VITAMIN", "MEDICINE"] = "SUPPLEMENT"
+    dosage: str = Field(default="", max_length=120)
+    schedule_slots: list[Literal["MORNING", "DAY", "EVENING"]] = ["MORNING"]
+    start_date: str = ""
+    end_date: str = ""
+    notes: str = Field(default="", max_length=300)
+    frequency: Literal["DAILY", "EVERY_OTHER_DAY", "WEEKDAYS"] = "DAILY"
+
+
+class RegimenPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    item_type: Literal["SUPPLEMENT", "VITAMIN", "MEDICINE"] | None = None
+    dosage: str | None = Field(default=None, max_length=120)
+    schedule_slots: list[Literal["MORNING", "DAY", "EVENING"]] | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    notes: str | None = Field(default=None, max_length=300)
+    frequency: Literal["DAILY", "EVERY_OTHER_DAY", "WEEKDAYS"] | None = None
+    is_active: bool | None = None
+
+
+class RegimenLogUpdate(BaseModel):
+    date: str | None = None
+    slot: Literal["MORNING", "DAY", "EVENING"]
+    taken: bool
+class CarePlanUpdate(BaseModel):
+    diagnosis: str = Field(default="", max_length=1000)
+    treatment_goal: str = Field(default="", max_length=1000)
+    summary: str = Field(default="", max_length=2000)
+    nutrition_guidance: str = Field(default="", max_length=2000)
+    avoidances: str = Field(default="", max_length=1000)
+    valid_until: str = ""
+
+
+class CareConsentUpdate(BaseModel):
+    accepted: bool
+
+
+class CareLinkCreate(BaseModel):
+    clinician_username: str
+    patient_username: str
+
+
+class CarePatientInvite(BaseModel):
+    username: str

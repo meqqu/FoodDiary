@@ -8,9 +8,11 @@ import httpx
 
 from app.config import settings
 from app.db import get_db
-from app.schemas import FoodCreate, MealType, ShoppingCreate
+from app.schemas import FoodCreate, MealType, ShoppingCreate, ShoppingPatch
 from app.services import food as food_svc
 from app.services import shopping as shopping_svc
+from app.services import care as care_svc
+from app.services import subscriptions as sub_svc
 
 
 TOOLS = [
@@ -125,6 +127,7 @@ async def _call_deepseek(messages: list[dict], tools: list | None = None) -> dic
 async def _run_tool(user_id: int, name: str, args: dict) -> tuple[str, dict | None]:
     action = None
     if name == "log_food":
+        await sub_svc.consume(user_id, "food")
         entry = await food_svc.log_food(
             user_id,
             FoodCreate(
@@ -183,6 +186,7 @@ async def chat(user_id: int, message: str) -> tuple[str, list[dict]]:
     shopping = await shopping_svc.list_shopping(user_id, include_checked=False)
     shopping_text = ", ".join(i.name for i in shopping) or "(пусто)"
     analytics = await shopping_svc.list_purchases(user_id, days=14)
+    care_plan = await care_svc.patient_plan(user_id)
 
     context = (
         f"Профиль: пол={profile.gender}, возраст={profile.age}, вес={profile.weight_kg} кг, "
@@ -194,10 +198,16 @@ async def chat(user_id: int, message: str) -> tuple[str, list[dict]]:
         f"{day_text}\n"
         f"Незакупленное из списка: {shopping_text}.\n"
         f"Покупки за 14 дней: сумма={analytics.total_amount}, категории={analytics.by_category}."
+        + (f"\nПлан врача/восстановления: контекст={care_plan['summary']}, питание={care_plan['nutrition_guidance']}, ограничения={care_plan['avoidances']}. Учитывай его только для питания и режима; не меняй лекарственные назначения." if care_plan else "")
     )
 
+    grammar = "женский род" if profile.gender == "FEMALE" else "мужской род"
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+            + f"\nПользователь: {grammar}. Учитывай пол в безопасных рекомендациях по питанию, а в обращениях и прошедшем времени используй соответствующие формы. Не делай медицинских выводов только на основании пола.",
+        },
         {"role": "system", "content": context},
         {"role": "user", "content": message},
     ]
@@ -289,3 +299,38 @@ async def get_history(user_id: int, limit: int = 30) -> list[dict]:
         return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()
+
+async def analyze_receipt(user_id: int, image: bytes, content_type: str) -> tuple[str, str, list[dict]]:
+    if not settings.vision_api_key or not settings.vision_base_url or not settings.vision_model:
+        raise ValueError("Распознавание чека не настроено. Добавьте VISION_API_KEY, VISION_BASE_URL и VISION_MODEL в .env.")
+    encoded = base64.b64encode(image).decode("ascii")
+    payload = {"model": settings.vision_model, "messages": [{"role": "user", "content": [{"type": "text", "text": "Прочитай чек. Верни список купленных продуктов и количества без цен."}, {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{encoded}"}}]}], "max_tokens": 500}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(f"{settings.vision_base_url.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {settings.vision_api_key}", "Content-Type": "application/json"}, json=payload)
+        response.raise_for_status()
+        description = (response.json()["choices"][0]["message"].get("content") or "").strip()
+    if not description:
+        raise ValueError("Не удалось распознать чек.")
+    reply, actions = await chat(user_id, f"Добавь в список покупок эти продукты с чека: {description}. Каждый продукт отдельной позицией.")
+    for action in actions:
+        item = action.get("item") if action.get("type") == "add_shopping" else None
+        if item:
+            await shopping_svc.patch_shopping(user_id, item["id"], ShoppingPatch(checked=True))
+    return reply, description, actions
+
+async def clinician_nutrition_draft(patient_id: int, diagnosis: str, treatment_goal: str, avoidances: str) -> str:
+    """A draft for the clinician to review; never changes a patient's plan automatically."""
+    profile = await food_svc.get_profile(patient_id)
+    prompt = (
+        "Составь краткий черновик рекомендаций по питанию для врача. "
+        "Не ставь диагнозов, не меняй дозировки и не назначай лекарства. "
+        "Верни 5–7 практичных пунктов: режим, белок/клетчатка, продукты, ограничения.\n"
+        f"Пациент: возраст {profile.age}, пол {profile.gender}, вес {profile.weight_kg}, рост {profile.height_cm}, цель профиля {profile.goal}, "
+        f"предпочтения {profile.dietary_preferences or 'нет'}, аллергии {profile.allergies or 'нет'}.\n"
+        f"Контекст врача: {diagnosis or 'не указан'}. Цель ведения: {treatment_goal or 'не указана'}. Ограничения: {avoidances or 'не указаны'}."
+    )
+    data = await _call_deepseek([
+        {"role": "system", "content": "Ты помогаешь врачу подготовить черновик только по питанию. Не выдавай медицинских назначений."},
+        {"role": "user", "content": prompt},
+    ])
+    return (data["choices"][0]["message"].get("content") or "").strip()

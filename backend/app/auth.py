@@ -11,6 +11,7 @@ from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
 from app.db import get_db
+from app.services import access as access_svc
 
 
 @dataclass
@@ -72,10 +73,12 @@ async def ensure_user(tg: TelegramUser) -> int:
         )
         user_id = cur.lastrowid
         await db.execute(
-            "INSERT INTO profiles (user_id) VALUES (?)",
+            "INSERT INTO profiles (user_id, profile_completed) VALUES (?, 0)",
             (user_id,),
         )
         await db.commit()
+        from app.services.subscriptions import ensure_subscription
+        await ensure_subscription(int(user_id))
         return int(user_id)
     finally:
         await db.close()
@@ -105,6 +108,8 @@ async def get_current_user_id(
         raise HTTPException(status_code=401, detail="X-Telegram-Init-Data required")
 
     tg = validate_init_data(x_telegram_init_data, settings.telegram_bot_token)
+    if not await access_svc.is_allowed_username(tg.username):
+        raise HTTPException(status_code=403, detail="Access is not granted for this Telegram account")
     return await ensure_user(tg)
 
 

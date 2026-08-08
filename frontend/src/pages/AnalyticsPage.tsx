@@ -1,0 +1,32 @@
+import { useEffect, useMemo, useState } from "react";
+import { api, AnalyticsDay, AnalyticsWeek, DaySummary, Profile } from "../api/client";
+
+const today = () => new Intl.DateTimeFormat("en-CA").format(new Date());
+const monday = (value = today()) => { const d = new Date(`${value}T12:00:00`); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+const moveWeek = (start: string, amount: number) => { const d = new Date(`${start}T12:00:00`); d.setDate(d.getDate() + amount * 7); return d.toISOString().slice(0, 10); };
+const weekday = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+const label = (day: AnalyticsDay) => day.status === "GOOD" ? "✓" : day.status === "PARTIAL" ? "•" : day.status === "ATTENTION" ? "!" : "—";
+const weeklyInsight=(week:AnalyticsWeek)=>{const s=week.summary;if(!s.recorded_days)return "Запишите хотя бы один день — тогда здесь появится личный вывод недели.";if(s.protein_days<s.recorded_days*.6)return `Уже получается: вы ведёте дневник ${s.recorded_days} дн. Следующий лучший шаг — добавить источник белка в основной приём пищи.`;if(s.water_days<s.recorded_days*.6)return `Уже получается: рацион фиксируется регулярно. Следующий лучший шаг — добирать воду до 1,5 л.`;if(s.average_score>=80)return "Уже получается: питание держится близко к плану. Следующий лучший шаг — сохранить этот ритм без жёстких ограничений.";return "Уже получается: вы видите картину недели. Следующий лучший шаг — сделать следующий приём пищи чуть более сбалансированным.";};
+
+export default function AnalyticsPage() {
+  const [start, setStart] = useState(monday()); const [week, setWeek] = useState<AnalyticsWeek | null>(null);
+  const [selected, setSelected] = useState(today()); const [day, setDay] = useState<DaySummary | null>(null); const [profile, setProfile] = useState<Profile | null>(null);
+  const [weight, setWeight] = useState(""); const [weights, setWeights] = useState<{date:string;weight_kg:number}[]>([]); const [error, setError] = useState("");
+  const loadWeek = async (value = start) => { try { setError(""); const result = await api.analyticsWeek(value); setWeek(result); if (!result.days.some(d => d.date === selected)) setSelected(result.days[0].date); } catch (e) { setError(e instanceof Error ? e.message : "Не удалось загрузить аналитику."); } };
+  useEffect(() => { void loadWeek(start); }, [start]);
+  useEffect(() => { api.profile().then(setProfile).catch(() => undefined); api.weights().then(r => setWeights(r.entries)).catch(() => undefined); }, []);
+  useEffect(() => { api.day(selected).then(setDay).catch(() => undefined); }, [selected]);
+  const selectedAnalytics = useMemo(() => week?.days.find(d => d.date === selected) ?? null, [week, selected]);
+  const weightGoal = profile && ["LOSE", "GAIN", "MAINTAIN"].includes(profile.goal);
+  return <>{error && <div className="error">{error}</div>}<section className="card analytics-card">
+    <div className="week-head"><button className="icon-btn" onClick={() => setStart(moveWeek(start,-1))}>‹</button><div><strong>{new Date(`${start}T12:00:00`).toLocaleDateString("ru-RU", {day:"numeric",month:"long"})} — {new Date(`${moveWeek(start,1)}T12:00:00`).toLocaleDateString("ru-RU", {day:"numeric",month:"long"})}</strong><span>Неделя питания</span></div><button className="icon-btn" onClick={() => setStart(moveWeek(start,1))}>›</button></div>
+    <div className="week-strip">{week?.days.map(item => <button key={item.date} className={`day-cell ${item.status.toLowerCase()} ${selected === item.date ? "selected" : ""}`} onClick={() => setSelected(item.date)}><span>{weekday(item.date)}</span><b>{new Date(`${item.date}T12:00:00`).getDate()}</b><i>{label(item)}</i><small>{item.status === "NO_DATA" ? "нет" : `${item.score}%`}</small></button>)}</div>
+  </section>
+  {week && <section className="analytics-summary"><div className="summary-tile"><span>Средний баланс</span><strong>{week.summary.average_score}%</strong><small>{week.summary.recorded_days} из 7 дней с записями</small></div><div className="summary-tile"><span>Белок в цели</span><strong>{week.summary.protein_days}</strong><small>дней из {week.summary.recorded_days || 0}</small></div></section>}
+  {selectedAnalytics && <section className="card day-analytics"><div className="section-head"><div><strong>{selected === today() ? "Сегодня" : new Date(`${selected}T12:00:00`).toLocaleDateString("ru-RU", {day:"numeric",month:"long"})}</strong><span>{selectedAnalytics.status === "NO_DATA" ? "Нет записей" : `Соответствие плану · ${selectedAnalytics.score}%`}</span></div></div>
+    {selectedAnalytics.status !== "NO_DATA" && <><div className="analytic-rows"><div><span>Калории</span><b>{Math.round(selectedAnalytics.calories)} / {Math.round(selectedAnalytics.target_calories)} ккал</b></div><div><span>Белок</span><b>{Math.round(selectedAnalytics.protein)} / {Math.round(selectedAnalytics.target_protein)} г</b></div><div><span>Вода</span><b>{selectedAnalytics.water_ml} мл</b></div></div><section className="mood-saved"><strong>Самочувствие</strong>{selectedAnalytics.mood ? <p>{["","Тяжело","Ниже обычного","Нормально","Хорошо","Отлично"][selectedAnalytics.mood]}{selectedAnalytics.energy ? ` · энергия: ${["","низкая","обычная","высокая"][selectedAnalytics.energy]}` : ""}</p> : <p>Отметка появится здесь после вечерней оценки в дневнике.</p>}</section></>}
+    <div className="detail-food"><strong>Что было в дневнике</strong>{day?.entries.length ? day.entries.map(entry => <div key={entry.id}><span>{entry.time || "—"}</span><b>{entry.food_name}</b><small>{Math.round(entry.calories)} ккал</small></div>) : <p className="muted">Нет записей о еде.</p>}</div>
+  </section>}
+  {weightGoal && <section className="card weight-card"><div className="section-head"><div><strong>Вес</strong><span>Только для отслеживания цели по весу</span></div></div><div className="row"><input inputMode="decimal" value={weight} onChange={e => setWeight(e.target.value)} placeholder="Вес, кг"/><button className="btn primary" disabled={!weight} onClick={async () => { const result = await api.addWeight(Number(weight)); setWeights(result.entries); setWeight(""); }}>Записать</button></div>{weights[0] && <p className="muted">Последняя запись: {weights[0].weight_kg} кг · {weights[0].date}</p>}</section>}
+  {week && <section className="card focus-card"><span>Вывод недели</span><strong>{weeklyInsight(week)}</strong></section>}</>;
+}
