@@ -47,6 +47,16 @@ from app.services import care as care_svc
 from app.services import subscriptions as sub_svc
 
 router = APIRouter(prefix="/api")
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+async def read_image_upload(image: UploadFile) -> bytes:
+    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(415, "Поддерживаются JPG, PNG и WEBP")
+    data = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Файл слишком большой. Максимальный размер — 8 МБ.")
+    return data
 
 
 @router.get("/health")
@@ -473,29 +483,26 @@ async def ai_chat(data: AiChatRequest, user_id: int = CurrentUser):
 
 @router.post("/ai/shopping-advice", response_model=AiChatResponse)
 async def ai_shopping(user_id: int = CurrentUser):
+    await sub_svc.consume(user_id, "ai")
     reply, actions = await ai_svc.shopping_advice(user_id)
     await ai_svc.record_history(user_id, "shopping", "Рекомендации покупок", reply)
     return AiChatResponse(reply=reply, actions=actions)
-
 @router.post("/ai/food-photo", response_model=FoodPhotoResponse)
 async def ai_food_photo(image: UploadFile = File(...), user_id: int = CurrentUser):
-    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
-        raise HTTPException(415, "Поддерживаются JPG, PNG и WEBP")
+    image_data = await read_image_upload(image)
+    await sub_svc.consume(user_id, "ai")
     try:
-        reply, description, actions = await ai_svc.analyze_food_photo(
-            user_id, await image.read(), image.content_type
-        )
+        reply, description, actions = await ai_svc.analyze_food_photo(user_id, image_data, image.content_type)
         return FoodPhotoResponse(reply=reply, description=description, actions=actions)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
 @router.post("/ai/shopping-refresh", response_model=AiChatResponse)
 async def ai_shopping_refresh(user_id: int = CurrentUser):
+    await sub_svc.consume(user_id, "ai")
     await shopping_svc.clear_all_shopping(user_id)
     reply, actions = await ai_svc.shopping_advice(user_id)
     await ai_svc.record_history(user_id, "shopping", "Подобрать продукты под мои цели", reply)
     return AiChatResponse(reply=reply, actions=actions)
-
 
 @router.get("/ai/history")
 async def ai_history(user_id: int = CurrentUser):
@@ -503,15 +510,14 @@ async def ai_history(user_id: int = CurrentUser):
 
 @router.post("/ai/receipt", response_model=FoodPhotoResponse)
 async def ai_receipt(image: UploadFile = File(...), user_id: int = CurrentUser):
-    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
-        raise HTTPException(415, "Поддерживаются JPG, PNG и WEBP")
+    image_data = await read_image_upload(image)
+    await sub_svc.consume(user_id, "ai")
     try:
-        reply, description, actions = await ai_svc.analyze_receipt(user_id, await image.read(), image.content_type)
+        reply, description, actions = await ai_svc.analyze_receipt(user_id, image_data, image.content_type)
         await ai_svc.record_history(user_id, "receipt", "Фото чека", reply)
         return FoodPhotoResponse(reply=reply, description=description, actions=actions)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
 @router.get("/subscription")
 async def subscription_status(user_id: int = CurrentUser):
     return await sub_svc.status(user_id)

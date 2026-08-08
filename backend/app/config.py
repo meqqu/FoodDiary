@@ -11,6 +11,7 @@ class Settings(BaseSettings):
         env_file=str(ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        env_ignore_empty=True,
     )
 
     telegram_bot_token: str = ""
@@ -20,13 +21,15 @@ class Settings(BaseSettings):
     vision_base_url: str = ""
     vision_model: str = ""
     webapp_url: str = ""
-    fallback_site_url: str = "http://38.180.244.125"
+    fallback_site_url: str = ""
     database_path: str = str(ROOT / "data" / "fooddiary.db")
-    cors_origins: str = "*"
+    cors_origins: str = "https://fooddairy.duckdns.org"
+    environment: str = "production"
     dev_user_id: int | None = None
     dev_user_name: str = "Dev User"
     # Comma-separated Telegram usernames without @
     allowed_usernames: str = ""
+    admin_telegram_ids: str = ""
     admin_usernames: str = "singullaris"
     subscription_price_stars: int = 99
     trial_days: int = 7

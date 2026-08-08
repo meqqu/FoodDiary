@@ -6,7 +6,8 @@ services:
     env_file: .env
     environment:
       DATABASE_PATH: /srv/data/fooddiary.db
-      CORS_ORIGINS: "*"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://fooddairy.duckdns.org}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     volumes:
       - ./data:/srv/data
   frontend:

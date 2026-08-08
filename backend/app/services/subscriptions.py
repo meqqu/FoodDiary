@@ -55,12 +55,17 @@ async def ensure_subscription(user_id: int) -> None:
 async def is_admin(user_id: int) -> bool:
     db = await get_db()
     try:
-        cur = await db.execute("SELECT username FROM users WHERE id=?", (user_id,))
+        cur = await db.execute("SELECT telegram_id, username FROM users WHERE id=?", (user_id,))
         row = await cur.fetchone()
     finally:
         await db.close()
+    if not row:
+        return False
+    admin_ids = {value.strip() for value in settings.admin_telegram_ids.split(",") if value.strip()}
+    if admin_ids:
+        return str(row["telegram_id"]) in admin_ids
     admins = {name.strip().lstrip("@").lower() for name in settings.admin_usernames.split(",") if name.strip()}
-    return bool(row and (row["username"] or "").lower() in admins)
+    return (row["username"] or "").lower() in admins
 
 
 async def status(user_id: int) -> dict:

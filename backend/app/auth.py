@@ -89,7 +89,7 @@ async def get_current_user_id(
     x_dev_user: str | None = Header(default=None),
 ) -> int:
     # Dev bypass for local UI without Telegram
-    if settings.dev_user_id and (
+    if settings.environment.lower() == "development" and settings.dev_user_id and (
         not x_telegram_init_data
         or x_telegram_init_data == "dev"
         or x_dev_user == "1"
