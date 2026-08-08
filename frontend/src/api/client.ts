@@ -185,6 +185,7 @@ export const api = {
   deleteClinicianRegimen: (patientId:number,id:number) => request(`/api/clinician/patients/${patientId}/regimen/${id}`,{method:"DELETE"}),
   clinicianNutritionDraft: (id:number,body:CarePlanInput) => request<{reply:string}>(`/api/clinician/patients/${id}/nutrition-draft`,{method:"POST",body:JSON.stringify(body)}),
   clinicianPlanHistory: (id:number) => request<CarePlan[]>(`/api/clinician/patients/${id}/plan-history`),
+  clinicianAiReview: (id:number) => request<{reply:string}>(`/api/clinician/patients/${id}/ai-review`,{method:"POST"}),
   clinicianRequests: (id:number) => request<CareRequest[]>(`/api/clinician/patients/${id}/requests`),
   clinicianMetricDefinitions: (id:number) => request<CareMetricDefinition[]>(`/api/clinician/patients/${id}/metric-definitions`),
   saveClinicianMetricDefinition: (id:number,body:Omit<CareMetricDefinition,"id"|"patient_user_id">) => request<CareMetricDefinition>(`/api/clinician/patients/${id}/metric-definitions`,{method:"PUT",body:JSON.stringify(body)}),

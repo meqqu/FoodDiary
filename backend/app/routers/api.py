@@ -353,6 +353,14 @@ async def clinician_patient_regimen_delete(patient_id: int, item_id: int, user_i
     return {"ok": True}
 
 
+@router.post("/clinician/patients/{patient_id}/ai-review")
+async def clinician_patient_ai_review(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    overview = await care_svc.clinician_overview(user_id, patient_id, 30)
+    return {"reply": await ai_svc.clinician_patient_review(patient_id, overview)}
+
+
 @router.post("/clinician/patients/{patient_id}/nutrition-draft")
 async def clinician_nutrition_draft(patient_id: int, data: CarePlanUpdate, user_id: int = CurrentUser):
     if not await care_svc.may_access(user_id, patient_id):

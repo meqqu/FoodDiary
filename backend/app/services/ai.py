@@ -334,3 +334,27 @@ async def clinician_nutrition_draft(patient_id: int, diagnosis: str, treatment_g
         {"role": "user", "content": prompt},
     ])
     return (data["choices"][0]["message"].get("content") or "").strip()
+async def clinician_patient_review(patient_id: int, overview: dict) -> str:
+    """A read-only clinical-workflow draft. It never writes to a patient plan."""
+    profile = await food_svc.get_profile(patient_id)
+    adherence = overview.get("adherence") or {}
+    open_requests = [item for item in overview.get("requests", []) if item.get("status") == "OPEN"]
+    checkins = overview.get("checkins", [])[:5]
+    metrics = overview.get("metrics", [])[:8]
+    prompt = (
+        "Подготовь для врача очень короткий обзор наблюдения за пациентом по перечисленным фактам. "
+        "Структура: 1) что стабильно, 2) что стоит обсудить, 3) один следующий шаг. "
+        "Не ставь диагноз, не интерпретируй показатели как норму/патологию, не меняй дозировки, не назначай лекарства и не обращайся к пациенту. "
+        "Это только черновик для проверки врачом.\n"
+        f"Профиль: возраст {profile.age}, пол {profile.gender}, цель {profile.goal}.\n"
+        f"Дней с записями питания за период: {len(overview.get('food_days', []))}.\n"
+        f"Приём по режиму: всего {adherence.get('due', 0)}, отмечено {adherence.get('taken', 0)}, явно пропущено {adherence.get('skipped', 0)}, без отметки {adherence.get('unconfirmed', 0)}.\n"
+        f"Открытые запросы пациента: {[{'тема': x.get('topic'), 'приоритет': x.get('priority'), 'текст': x.get('message', '')[:220]} for x in open_requests]}.\n"
+        f"Последние отметки состояния: {[{'дата': x.get('date'), 'сон': x.get('sleep_quality'), 'симптомы': x.get('symptoms', '')[:180], 'просит_связаться': bool(x.get('needs_contact'))} for x in checkins]}.\n"
+        f"Последние показатели: {[{'дата': x.get('date'), 'название': x.get('label', x.get('code')), 'значение': x.get('value'), 'единица': x.get('unit', '')} for x in metrics]}."
+    )
+    data = await _call_deepseek([
+        {"role": "system", "content": "Ты помощник врача. Возвращай осторожный фактологический черновик для клинической проверки, без диагноза и назначений."},
+        {"role": "user", "content": prompt},
+    ])
+    return (data["choices"][0]["message"].get("content") or "").strip()
