@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS profiles (
     vegetarian INTEGER NOT NULL DEFAULT 0,
     vegan INTEGER NOT NULL DEFAULT 0,
     raw_food INTEGER NOT NULL DEFAULT 0,
+    custom_targets_enabled INTEGER NOT NULL DEFAULT 0,
+    custom_calories REAL NOT NULL DEFAULT 0,
+    custom_protein REAL NOT NULL DEFAULT 0,
+    custom_fat REAL NOT NULL DEFAULT 0,
+    custom_carbs REAL NOT NULL DEFAULT 0,
     goal TEXT NOT NULL DEFAULT 'MAINTAIN',
     gender TEXT NOT NULL DEFAULT 'MALE',
     health_issues TEXT NOT NULL DEFAULT '',
@@ -308,6 +313,8 @@ async def init_db() -> None:
             "target_weight_kg": "REAL", "goal_deadline": "TEXT NOT NULL DEFAULT ''",
             "dietary_preferences": "TEXT NOT NULL DEFAULT ''", "allergies": "TEXT NOT NULL DEFAULT ''",
             "lab_results": "TEXT NOT NULL DEFAULT ''", "vegan": "INTEGER NOT NULL DEFAULT 0", "raw_food": "INTEGER NOT NULL DEFAULT 0",
+            "custom_targets_enabled": "INTEGER NOT NULL DEFAULT 0", "custom_calories": "REAL NOT NULL DEFAULT 0",
+            "custom_protein": "REAL NOT NULL DEFAULT 0", "custom_fat": "REAL NOT NULL DEFAULT 0", "custom_carbs": "REAL NOT NULL DEFAULT 0",
         }
         for name, definition in migrations.items():
             if name not in columns:

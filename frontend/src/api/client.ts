@@ -40,6 +40,11 @@ export type Profile = {
   vegetarian: boolean;
   vegan: boolean;
   raw_food: boolean;
+  custom_targets_enabled: boolean;
+  custom_calories: number;
+  custom_protein: number;
+  custom_fat: number;
+  custom_carbs: number;
   goal: string;
   gender: string;
   health_issues: string;

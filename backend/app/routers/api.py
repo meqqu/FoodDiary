@@ -77,7 +77,10 @@ async def get_profile(user_id: int = CurrentUser):
 
 @router.put("/profile", response_model=ProfileOut)
 async def put_profile(data: ProfileUpdate, user_id: int = CurrentUser):
-    return await food_svc.update_profile(user_id, data)
+    try:
+        return await food_svc.update_profile(user_id, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/food/day", response_model=DaySummary)

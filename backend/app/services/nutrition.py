@@ -27,6 +27,16 @@ def calc_bmi(weight_kg: float, height_cm: float) -> float:
 
 
 def calc_targets(profile: ProfileUpdate | dict) -> dict[str, float]:
+    custom_enabled = bool(profile.get("custom_targets_enabled")) if isinstance(profile, dict) else profile.custom_targets_enabled
+    if custom_enabled:
+        values = {
+            "calories": float(profile.get("custom_calories", 0)) if isinstance(profile, dict) else profile.custom_calories,
+            "protein": float(profile.get("custom_protein", 0)) if isinstance(profile, dict) else profile.custom_protein,
+            "fat": float(profile.get("custom_fat", 0)) if isinstance(profile, dict) else profile.custom_fat,
+            "carbs": float(profile.get("custom_carbs", 0)) if isinstance(profile, dict) else profile.custom_carbs,
+        }
+        if all(value > 0 for value in values.values()):
+            return {key: round(value, 0) for key, value in values.items()}
     if isinstance(profile, dict):
         weight = float(profile["weight_kg"])
         height = float(profile["height_cm"])
@@ -198,6 +208,11 @@ def profile_from_row(row) -> ProfileOut:
         "vegetarian": bool(row["vegetarian"]),
         "vegan": bool(row["vegan"]) if "vegan" in row.keys() else False,
         "raw_food": bool(row["raw_food"]) if "raw_food" in row.keys() else False,
+        "custom_targets_enabled": bool(row["custom_targets_enabled"]) if "custom_targets_enabled" in row.keys() else False,
+        "custom_calories": float(row["custom_calories"]) if "custom_calories" in row.keys() else 0,
+        "custom_protein": float(row["custom_protein"]) if "custom_protein" in row.keys() else 0,
+        "custom_fat": float(row["custom_fat"]) if "custom_fat" in row.keys() else 0,
+        "custom_carbs": float(row["custom_carbs"]) if "custom_carbs" in row.keys() else 0,
         "goal": row["goal"],
         "gender": row["gender"],
         "health_issues": row["health_issues"] or "",

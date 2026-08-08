@@ -41,6 +41,11 @@ class ProfileOut(BaseModel):
     vegetarian: bool
     vegan: bool = False
     raw_food: bool = False
+    custom_targets_enabled: bool = False
+    custom_calories: float = 0
+    custom_protein: float = 0
+    custom_fat: float = 0
+    custom_carbs: float = 0
     goal: HealthGoal
     gender: Gender
     health_issues: str
@@ -63,6 +68,11 @@ class ProfileUpdate(BaseModel):
     vegetarian: bool = False
     vegan: bool = False
     raw_food: bool = False
+    custom_targets_enabled: bool = False
+    custom_calories: float = Field(default=0, ge=0, le=10000)
+    custom_protein: float = Field(default=0, ge=0, le=500)
+    custom_fat: float = Field(default=0, ge=0, le=300)
+    custom_carbs: float = Field(default=0, ge=0, le=1200)
     goal: HealthGoal
     gender: Gender
     health_issues: str = ""

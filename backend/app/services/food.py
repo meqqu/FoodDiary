@@ -55,13 +55,15 @@ async def get_profile(user_id: int):
 
 
 async def update_profile(user_id: int, data: ProfileUpdate):
+    if data.custom_targets_enabled and min(data.custom_calories, data.custom_protein, data.custom_fat, data.custom_carbs) <= 0:
+        raise ValueError("Заполните все четыре ручные нормы положительными значениями.")
     db = await get_db()
     try:
         await db.execute(
             """
             UPDATE profiles SET
                 age=?, weight_kg=?, height_cm=?, activity_level=?,
-                vegetarian=?, vegan=?, raw_food=?, goal=?, gender=?, health_issues=?, target_weight_kg=?,
+                vegetarian=?, vegan=?, raw_food=?, custom_targets_enabled=?, custom_calories=?, custom_protein=?, custom_fat=?, custom_carbs=?, goal=?, gender=?, health_issues=?, target_weight_kg=?,
                 goal_deadline=?, dietary_preferences=?, allergies=?, lab_results=?, profile_completed=1
             WHERE user_id=?
             """,
@@ -73,6 +75,11 @@ async def update_profile(user_id: int, data: ProfileUpdate):
                 1 if (data.vegetarian or data.vegan) else 0,
                 1 if data.vegan else 0,
                 1 if data.raw_food else 0,
+                1 if data.custom_targets_enabled else 0,
+                data.custom_calories,
+                data.custom_protein,
+                data.custom_fat,
+                data.custom_carbs,
                 data.goal.value,
                 data.gender.value,
                 data.health_issues,
