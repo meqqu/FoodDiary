@@ -16,6 +16,12 @@ from app.schemas import (
     RegimenCreate,
     RegimenPatch,
     RegimenLogUpdate,
+    RegimenSkipUpdate,
+    CareRequestCreate,
+    CareRequestResolve,
+    CareCheckinUpdate,
+    CareMetricDefinitionCreate,
+    CareMetricEntryCreate,
     CarePlanUpdate,
     CareConsentUpdate,
     CareLinkCreate,
@@ -135,7 +141,14 @@ async def care_plan(user_id: int = CurrentUser):
 
 @router.put("/care/plan")
 async def care_plan_save(data: CarePlanUpdate, user_id: int = CurrentUser):
+    if await care_svc.has_active_clinician(user_id):
+        raise HTTPException(403, "Активный план пациента редактирует только врач.")
     return await care_svc.save_plan(user_id, user_id, data, "PATIENT")
+
+
+@router.get("/care/plan/history")
+async def care_plan_history(user_id: int = CurrentUser):
+    return await care_svc.plan_history(user_id)
 
 
 @router.get("/care/links")
@@ -162,6 +175,49 @@ async def care_audit(user_id: int = CurrentUser):
     return await care_svc.audit(user_id)
 
 
+@router.get("/care/requests")
+async def care_requests(user_id: int = CurrentUser):
+    return await care_svc.patient_requests(user_id)
+
+
+@router.post("/care/requests")
+async def care_request_create(data: CareRequestCreate, user_id: int = CurrentUser):
+    try:
+        item = await care_svc.create_request(user_id, data)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    from app.bot.runner import send_care_request_notification
+    await send_care_request_notification(item.get("clinician_telegram_id"), item["topic"], item["priority"])
+    return item
+
+
+@router.get("/care/checkin")
+async def care_checkin(date: str | None = None, user_id: int = CurrentUser):
+    return await care_svc.get_checkin(user_id, date)
+
+
+@router.put("/care/checkin")
+async def care_checkin_save(data: CareCheckinUpdate, user_id: int = CurrentUser):
+    if not await care_svc.has_active_clinician(user_id):
+        raise HTTPException(403, "Отметки сопровождения доступны после подтверждения доступа врачу.")
+    return await care_svc.update_checkin(user_id, data)
+
+
+@router.get("/care/metrics")
+async def care_metrics(user_id: int = CurrentUser):
+    return {"definitions": await care_svc.metric_definitions(user_id), "entries": await care_svc.metric_entries(user_id)}
+
+
+@router.post("/care/metrics")
+async def care_metric_save(data: CareMetricEntryCreate, user_id: int = CurrentUser):
+    if not await care_svc.has_active_clinician(user_id):
+        raise HTTPException(403, "Показатели доступны после подтверждения доступа врачу.")
+    try:
+        return await care_svc.record_metric(user_id, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/clinician/patients/invite")
 async def clinician_patient_invite(data: CarePatientInvite, user_id: int = CurrentUser):
     try:
@@ -174,6 +230,34 @@ async def clinician_patient_invite(data: CarePatientInvite, user_id: int = Curre
     await send_patient_invitation(invitation["patient_telegram_id"], invitation["clinician_name"], invitation["id"])
     return {"id": invitation["id"], "status": "PENDING", "message": "Приглашение отправлено пациенту в боте."}
 
+@router.get("/clinician/queue")
+async def clinician_queue(user_id: int = CurrentUser):
+    if not await care_svc.is_clinician(user_id):
+        raise HTTPException(403, "Clinician role required")
+    return await care_svc.clinician_queue(user_id)
+
+
+@router.get("/clinician/requests/{request_id}")
+async def clinician_request_get(request_id: int, user_id: int = CurrentUser):
+    if not await care_svc.is_clinician(user_id):
+        raise HTTPException(403, "Clinician role required")
+    requests = await care_svc.clinician_requests(user_id)
+    item = next((item for item in requests if item["id"] == request_id), None)
+    if not item:
+        raise HTTPException(404, "Not found")
+    return item
+
+
+@router.put("/clinician/requests/{request_id}/resolve")
+async def clinician_request_resolve(request_id: int, data: CareRequestResolve, user_id: int = CurrentUser):
+    item = await care_svc.resolve_request(user_id, request_id, data.resolution)
+    if not item:
+        raise HTTPException(404, "Not found")
+    from app.bot.runner import send_care_request_resolution
+    await send_care_request_resolution(item.get("patient_telegram_id"))
+    return item
+
+
 @router.get("/clinician/patients")
 async def clinician_patients(user_id: int = CurrentUser):
     if not await care_svc.is_clinician(user_id): raise HTTPException(403, "Clinician role required")
@@ -184,6 +268,34 @@ async def clinician_patients(user_id: int = CurrentUser):
 async def clinician_patient_overview(patient_id: int, days: int = Query(30, ge=7, le=365), user_id: int = CurrentUser):
     try: return await care_svc.clinician_overview(user_id, patient_id, days)
     except PermissionError as exc: raise HTTPException(403, str(exc)) from exc
+
+
+@router.get("/clinician/patients/{patient_id}/plan-history")
+async def clinician_patient_plan_history(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await care_svc.plan_history(patient_id)
+
+
+@router.get("/clinician/patients/{patient_id}/requests")
+async def clinician_patient_requests(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await care_svc.clinician_requests(user_id, patient_id)
+
+
+@router.get("/clinician/patients/{patient_id}/metric-definitions")
+async def clinician_metric_definitions(patient_id: int, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await care_svc.metric_definitions(patient_id)
+
+
+@router.put("/clinician/patients/{patient_id}/metric-definitions")
+async def clinician_metric_definition_save(patient_id: int, data: CareMetricDefinitionCreate, user_id: int = CurrentUser):
+    if not await care_svc.may_access(user_id, patient_id):
+        raise HTTPException(403, "No patient consent")
+    return await care_svc.set_metric_definition(user_id, patient_id, data)
 
 
 @router.get("/clinician/patients/{patient_id}/plan")
@@ -208,7 +320,9 @@ async def clinician_patient_regimen(patient_id: int, user_id: int = CurrentUser)
 async def clinician_patient_regimen_create(patient_id: int, data: RegimenCreate, user_id: int = CurrentUser):
     if not await care_svc.may_access(user_id, patient_id):
         raise HTTPException(403, "No patient consent")
-    return await regimen_svc.create_item(patient_id, data, prescribed_by_user_id=user_id)
+    item = await regimen_svc.create_item(patient_id, data, prescribed_by_user_id=user_id)
+    await care_svc.audit_event(user_id, patient_id, "REGIMEN_CREATED", item["name"])
+    return item
 
 
 @router.patch("/clinician/patients/{patient_id}/regimen/{item_id}")
@@ -221,6 +335,7 @@ async def clinician_patient_regimen_patch(patient_id: int, item_id: int, data: R
         raise HTTPException(403, str(exc)) from exc
     if not item:
         raise HTTPException(404, "Not found")
+    await care_svc.audit_event(user_id, patient_id, "REGIMEN_UPDATED", item["name"])
     return item
 
 
@@ -234,6 +349,7 @@ async def clinician_patient_regimen_delete(patient_id: int, item_id: int, user_i
         raise HTTPException(403, str(exc)) from exc
     if not deleted:
         raise HTTPException(404, "Not found")
+    await care_svc.audit_event(user_id, patient_id, "REGIMEN_DELETED", str(item_id))
     return {"ok": True}
 
 
@@ -276,6 +392,13 @@ async def regimen_today(date: str | None = None, user_id: int = CurrentUser):
 @router.put("/regimen/{item_id}/taken")
 async def regimen_taken(item_id: int, data: RegimenLogUpdate, user_id: int = CurrentUser):
     if not await regimen_svc.set_taken(user_id, item_id, data.slot, data.taken, data.date):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@router.put("/regimen/{item_id}/skipped")
+async def regimen_skipped(item_id: int, data: RegimenSkipUpdate, user_id: int = CurrentUser):
+    if not await regimen_svc.set_skipped(user_id, item_id, data.slot, data.reason, data.date):
         raise HTTPException(404, "Not found")
     return {"ok": True}
 

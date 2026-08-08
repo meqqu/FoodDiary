@@ -136,6 +136,30 @@ async def send_patient_invitation(telegram_id: int, clinician_name: str, link_id
         return False
 
 
+async def send_care_request_notification(telegram_id: int | None, topic: str, priority: str) -> bool:
+    if not bot or not telegram_id:
+        return False
+    topics = {"MEDICINE": "назначение или препарат", "WELLBEING": "самочувствие", "NUTRITION": "питание", "OTHER": "другой вопрос"}
+    prefix = "Требует внимания: " if priority == "HIGH" else "Новый запрос пациента: "
+    try:
+        await bot.send_message(telegram_id, prefix + topics.get(topic, "вопрос пациента") + ". Откройте кабинет врача, чтобы посмотреть и ответить.")
+        return True
+    except Exception:
+        logger.exception("Could not send care request notification to %s", telegram_id)
+        return False
+
+
+async def send_care_request_resolution(telegram_id: int | None) -> bool:
+    if not bot or not telegram_id:
+        return False
+    try:
+        await bot.send_message(telegram_id, "Специалист ответил на ваш запрос. Откройте раздел «Связь с врачом» в профиле Food Diary.", reply_markup=webapp_keyboard())
+        return True
+    except Exception:
+        logger.exception("Could not send care resolution notification to %s", telegram_id)
+        return False
+
+
 @dp.callback_query(F.data.startswith("care-invite:"))
 async def care_invite_answer(callback: CallbackQuery):
     if not callback.from_user or not callback.data:

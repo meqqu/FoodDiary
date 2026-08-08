@@ -54,8 +54,12 @@ export type Profile = {
 export type CarePlan = {id:number;patient_user_id:number;author_user_id:number|null;author_name?:string|null;source:"PATIENT"|"CLINICIAN";diagnosis:string;treatment_goal:string;summary:string;nutrition_guidance:string;avoidances:string;valid_until:string;created_at:string;};
 export type CareLink = {id:number;clinician_user_id:number;status:"PENDING"|"ACTIVE"|"REVOKED";username:string|null;first_name:string|null;created_at:string;consented_at:string|null;};
 export type CarePlanInput = {diagnosis:string;treatment_goal:string;summary:string;nutrition_guidance:string;avoidances:string;valid_until:string};
+export type CareRequest = {id:number;patient_user_id:number;clinician_user_id:number;topic:"MEDICINE"|"WELLBEING"|"NUTRITION"|"OTHER";message:string;priority:"NORMAL"|"HIGH";status:"OPEN"|"RESOLVED";resolution:string;created_at:string;resolved_at:string|null;clinician_name?:string|null;patient_name?:string|null;};
+export type CareCheckin = {date:string;sleep_quality:number|null;symptoms:string;note:string;needs_contact:boolean|number;updated_at?:string;};
+export type CareMetricDefinition = {id:number;patient_user_id:number;code:"WEIGHT"|"PRESSURE_SYS"|"PRESSURE_DIA"|"GLUCOSE"|"PAIN"|"STEPS";label:string;unit:string;is_active:boolean;};
+export type CareMetricEntry = {id:number;patient_user_id:number;code:string;date:string;value:number;note:string;label?:string;unit?:string;};
 export type RegimenSlot = "MORNING" | "DAY" | "EVENING";
-export type RegimenItem = { id:number; name:string; item_type:"SUPPLEMENT"|"VITAMIN"|"MEDICINE"; dosage:string; schedule_slots:RegimenSlot[]; start_date:string; end_date:string; notes:string; frequency:"DAILY"|"EVERY_OTHER_DAY"|"WEEKDAYS"; is_active:boolean; is_prescribed?:boolean; taken?:RegimenSlot[]; };
+export type RegimenItem = { id:number; name:string; item_type:"SUPPLEMENT"|"VITAMIN"|"MEDICINE"; dosage:string; schedule_slots:RegimenSlot[]; start_date:string; end_date:string; notes:string; frequency:"DAILY"|"EVERY_OTHER_DAY"|"WEEKDAYS"; is_active:boolean; is_prescribed?:boolean; taken?:RegimenSlot[]; skipped?:Partial<Record<RegimenSlot,"FORGOT"|"OUT_OF_STOCK"|"NOT_WELL"|"OTHER">>; };
 export type ShoppingItem = {
   id: number;
   name: string;
@@ -161,6 +165,15 @@ export const api = {
   consentCareLink: (id:number,accepted:boolean) => request(`/api/care/links/${id}/consent`,{method:"PUT",body:JSON.stringify({accepted})}),
   revokeCareLink: (id:number) => request(`/api/care/links/${id}`,{method:"DELETE"}),
   careAudit: () => request<{action:string;details:string;created_at:string}[]>("/api/care/audit"),
+  carePlanHistory: () => request<CarePlan[]>("/api/care/plan/history"),
+  careRequests: () => request<CareRequest[]>("/api/care/requests"),
+  createCareRequest: (body:{topic:CareRequest["topic"];message:string;priority:"NORMAL"|"HIGH"}) => request<CareRequest>("/api/care/requests",{method:"POST",body:JSON.stringify(body)}),
+  careCheckin: (date?:string) => request<CareCheckin>(`/api/care/checkin${date?`?date=${date}`:""}`),
+  saveCareCheckin: (body:CareCheckin) => request<CareCheckin>("/api/care/checkin",{method:"PUT",body:JSON.stringify(body)}),
+  careMetrics: () => request<{definitions:CareMetricDefinition[];entries:CareMetricEntry[]}>("/api/care/metrics"),
+  addCareMetric: (body:{code:CareMetricDefinition["code"];value:number;date?:string;note?:string}) => request<CareMetricEntry>("/api/care/metrics",{method:"POST",body:JSON.stringify(body)}),
+  clinicianQueue: () => request<any[]>("/api/clinician/queue"),
+  clinicianResolveRequest: (id:number,resolution:string) => request<CareRequest>(`/api/clinician/requests/${id}/resolve`,{method:"PUT",body:JSON.stringify({resolution})}),
   clinicianPatients: () => request<{id:number;username:string|null;first_name:string|null;consented_at:string}[]>("/api/clinician/patients"),
   invitePatient: (username:string) => request<{id:number;status:string;message:string}>("/api/clinician/patients/invite",{method:"POST",body:JSON.stringify({username})}),
   clinicianPlan: (id:number) => request<CarePlan|null>(`/api/clinician/patients/${id}/plan`),
@@ -171,6 +184,10 @@ export const api = {
   patchClinicianRegimen: (patientId:number,id:number,body:Partial<RegimenItem>) => request<RegimenItem>(`/api/clinician/patients/${patientId}/regimen/${id}`,{method:"PATCH",body:JSON.stringify(body)}),
   deleteClinicianRegimen: (patientId:number,id:number) => request(`/api/clinician/patients/${patientId}/regimen/${id}`,{method:"DELETE"}),
   clinicianNutritionDraft: (id:number,body:CarePlanInput) => request<{reply:string}>(`/api/clinician/patients/${id}/nutrition-draft`,{method:"POST",body:JSON.stringify(body)}),
+  clinicianPlanHistory: (id:number) => request<CarePlan[]>(`/api/clinician/patients/${id}/plan-history`),
+  clinicianRequests: (id:number) => request<CareRequest[]>(`/api/clinician/patients/${id}/requests`),
+  clinicianMetricDefinitions: (id:number) => request<CareMetricDefinition[]>(`/api/clinician/patients/${id}/metric-definitions`),
+  saveClinicianMetricDefinition: (id:number,body:Omit<CareMetricDefinition,"id"|"patient_user_id">) => request<CareMetricDefinition>(`/api/clinician/patients/${id}/metric-definitions`,{method:"PUT",body:JSON.stringify(body)}),
   adminCareOverview: () => request<{users:{id:number;username:string|null;first_name:string|null;role:"USER"|"PATIENT"|"PENDING_PATIENT"|"CLINICIAN"|"ADMIN"}[];links:{id:number;status:string;clinician_username:string|null;clinician_name:string|null;patient_username:string|null;patient_name:string|null}[]}>("/api/admin/care-overview"),
   adminRemoveClinician: (username:string) => request(`/api/admin/clinicians/${encodeURIComponent(username)}`,{method:"DELETE"}),
   adminMakeClinician: (username:string) => request(`/api/admin/clinicians?username=${encodeURIComponent(username)}`,{method:"POST"}),
@@ -179,7 +196,9 @@ export const api = {
   patchRegimen: (id:number, body: Partial<RegimenItem>) => request<RegimenItem>(`/api/regimen/${id}`, {method:"PATCH",body:JSON.stringify(body)}),
   deleteRegimen: (id:number) => request(`/api/regimen/${id}`, {method:"DELETE"}),
   regimenToday: (date?:string) => request<RegimenItem[]>(`/api/regimen/today${date?`?date=${date}`:""}`),
-  setRegimenTaken: (id:number, slot:RegimenSlot, taken:boolean, date?:string) => request(`/api/regimen/${id}/taken`, {method:"PUT",body:JSON.stringify({slot,taken,date})}),  shopping: () => request<ShoppingItem[]>("/api/shopping"),
+  setRegimenTaken: (id:number, slot:RegimenSlot, taken:boolean, date?:string) => request(`/api/regimen/${id}/taken`, {method:"PUT",body:JSON.stringify({slot,taken,date})}),
+  setRegimenSkipped: (id:number, slot:RegimenSlot, reason:"FORGOT"|"OUT_OF_STOCK"|"NOT_WELL"|"OTHER", date?:string) => request(`/api/regimen/${id}/skipped`, {method:"PUT",body:JSON.stringify({slot,reason,date})}),
+  shopping: () => request<ShoppingItem[]>("/api/shopping"),
   addShopping: (body: { name: string; category?: string; quantity?: string }) =>
     request<ShoppingItem>("/api/shopping", {
       method: "POST",

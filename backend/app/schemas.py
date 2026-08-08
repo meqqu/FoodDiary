@@ -242,3 +242,39 @@ class CareLinkCreate(BaseModel):
 
 class CarePatientInvite(BaseModel):
     username: str
+class RegimenSkipUpdate(BaseModel):
+    date: str | None = None
+    slot: Literal["MORNING", "DAY", "EVENING"]
+    reason: Literal["FORGOT", "OUT_OF_STOCK", "NOT_WELL", "OTHER"] = "OTHER"
+
+
+class CareRequestCreate(BaseModel):
+    topic: Literal["MEDICINE", "WELLBEING", "NUTRITION", "OTHER"]
+    message: str = Field(default="", max_length=800)
+    priority: Literal["NORMAL", "HIGH"] = "NORMAL"
+
+
+class CareRequestResolve(BaseModel):
+    resolution: str = Field(default="", max_length=800)
+
+
+class CareCheckinUpdate(BaseModel):
+    date: str | None = None
+    sleep_quality: int | None = Field(default=None, ge=1, le=5)
+    symptoms: str = Field(default="", max_length=500)
+    note: str = Field(default="", max_length=500)
+    needs_contact: bool = False
+
+
+class CareMetricDefinitionCreate(BaseModel):
+    code: Literal["WEIGHT", "PRESSURE_SYS", "PRESSURE_DIA", "GLUCOSE", "PAIN", "STEPS"]
+    label: str = Field(min_length=1, max_length=80)
+    unit: str = Field(min_length=1, max_length=24)
+    is_active: bool = True
+
+
+class CareMetricEntryCreate(BaseModel):
+    code: Literal["WEIGHT", "PRESSURE_SYS", "PRESSURE_DIA", "GLUCOSE", "PAIN", "STEPS"]
+    value: float = Field(ge=0, le=100000)
+    date: str | None = None
+    note: str = Field(default="", max_length=300)

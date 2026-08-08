@@ -222,6 +222,58 @@ CREATE TABLE IF NOT EXISTS weight_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, date)
 );
+
+-- Companion-care data remains separate from the food diary. It is available
+-- only to a patient and a clinician whose access was explicitly accepted.
+CREATE TABLE IF NOT EXISTS care_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    clinician_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    topic TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'NORMAL',
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_care_requests_clinician ON care_requests(clinician_user_id, status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_care_requests_patient ON care_requests(patient_user_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS care_checkins (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    sleep_quality INTEGER,
+    symptoms TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    needs_contact INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_care_checkins_user_date ON care_checkins(user_id, date DESC);
+
+CREATE TABLE IF NOT EXISTS care_metric_definitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    label TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    set_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(patient_user_id, code)
+);
+CREATE TABLE IF NOT EXISTS care_metric_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    value REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(patient_user_id, code, date)
+);
+CREATE INDEX IF NOT EXISTS idx_care_metrics_patient_date ON care_metric_entries(patient_user_id, date DESC);
 """
 
 
@@ -260,6 +312,10 @@ async def init_db() -> None:
         for name, definition in {"frequency": "TEXT NOT NULL DEFAULT 'DAILY'", "prescribed_by_user_id": "INTEGER"}.items():
             if name not in regimen_columns:
                 await db.execute(f"ALTER TABLE regimen_items ADD COLUMN {name} {definition}")
+        log_columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(regimen_logs)")).fetchall()}
+        for name, definition in {"status": "TEXT NOT NULL DEFAULT 'TAKEN'", "skip_reason": "TEXT NOT NULL DEFAULT ''"}.items():
+            if name not in log_columns:
+                await db.execute(f"ALTER TABLE regimen_logs ADD COLUMN {name} {definition}")
         await db.commit()
     finally:
         await db.close()
